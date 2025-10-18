@@ -1,0 +1,1105 @@
+<html>
+	<head>
+		<style>
+			* {font-family: sans-serif;}
+			textarea {font-family: monospace;}
+
+			table {border-collapse: collapse;} /*to avoid double border*/
+			td	{border: thin solid black; padding: 0px; text-align: center; height: 1.5em; width: 1.5em;}
+			td.noborder, td.nomessage, td.good, td.bad
+				{border: medium none white; padding: auto; text-align: left; height: auto; width: auto;}
+			td.nomessage{color: black; background-color: white}
+			td.good		{color: darkgreen; background-color: lime}
+			td.bad		{color: red; background-color: darkred}
+
+			/* cell classes in the output table: r/c/i/x u/e/f t/x b/x g/x"
+			[0] - r/c/x - row header / column header / none of them (text color)
+			[2] - u/e/f - unknown / removed / filled (background color)
+			[4] - t/x - line-through (completed) / not
+			[6] - b/x - thicker border at the bottom / default
+			[8] - g/x - thicker border at the right sight / default
+			*/
+			td.r {color: red}
+			td.c {color: orange}
+			
+			td.u {background-color: #888888}
+			td.e {background-color: white}
+			td.f {background-color: #222222}
+			
+			td.t {text-decoration: line-through}
+			td.b {border-bottom-width: medium}
+			td.g {border-right-width: medium}
+		</style>
+		<title>Paint by Numbers nonogram solver</title>
+	</head>
+	<body>
+		<table><tr><td id="message_box_id" class="nomessage">&nbsp;</table>
+
+		<table><tr>
+			<td class="noborder"><br>
+Drop the file onto this site<br>
+or use the textarea below:<br>
+<textarea id="load_input_id" rows=15 cols=20 style="overflow: scroll; white-space: pre;">
+rows
+1,5
+1 1
+1,1,2
+1,1,1
+5 5
+
+cols
+5
+1
+1
+1
+1
+
+0
+
+5
+1,1
+1,1
+1,1,1
+1,3
+</textarea><br>
+<input type="button" id="load_id" value="Load it" onclick="load()"><br><br>
+<input type="button" id="reload_id" value="Reload" onclick="reload()"><br><br>			
+<input type="button" id="step_id" value="Step >" onclick="solutions[0].step()"><br><br>
+<input type="button" id="solve_id" value="Solve >>" onclick="solutions[0].solve()"><br><br>
+<input type="checkbox" id="preview_id"><label for="preview_id" id="preview_lab_id">Preview</label><br><br>
+<input type="checkbox" id="brute_id"><label for="brute_id" id="brute_lab_id">Use also brute-force approach</label><br><br>
+<input type="number" id="choose_id" min="1" max="5"><div id="choose_lab_id"></div>
+
+		<td class="noborder">
+		<div id="table_output_id"><table></table></div>
+		<!-- Internet Explorer canot use innerHTML with table - that is the reason for div -->
+		<script language = "javascript" type = "text/javascript">
+
+//FROM STACKOVERFLOW: only implement if no native implementation is available
+if (typeof Array.isArray === 'undefined') {
+	Array.isArray = function(obj) {
+		return Object.prototype.toString.call(obj) === '[object Array]';
+	}
+};
+
+//CONSTANTS
+//nonremoved_blocks
+NRB_beg=0
+NRB_end=1
+NRB_len=2
+NRB_filled_blocks=3
+//filled_blocks
+FB_beg=0
+FB_end=1
+FB_len=2
+FB_desc_num=3
+//row/column
+ROW=0
+COL=1
+//min/max
+MIN=0
+MAX=1
+function rc_text(rc){
+	return rc==ROW ? " row " : " column "
+}
+function len(arr){ return arr.length } //to have it as a function
+
+//interface elements
+message_box=document.getElementById("message_box_id")
+load_input=document.getElementById("load_input_id")
+load_input.select(); //just in the beginning
+table_output=document.getElementById("table_output_id")
+preview_lab=document.getElementById("preview_lab_id")
+brute_lab=document.getElementById("brute_lab_id")
+
+
+nums=[[],[]]
+sol_sel=[]
+
+//message in the message box above
+function message(type, text){
+	message_box.setAttribute("class",type);
+	message_box.innerHTML=text;
+}
+
+//if all array elements are true (works also with multi-dim)
+function aall(arr){
+	for(var i=0;i<arr.length;i++){
+		if(Array.isArray(arr[i])){
+			if(!aall(arr[i]))
+				return false;
+		}
+		else if(!arr[i]){
+			return false;
+		}
+	}
+	return true;
+}
+//if any array element is true (works also with multi-dim)
+function aany(arr){
+	for(var i=0;i<arr.length;i++){
+		if(Array.isArray(arr[i])){
+			if(aany(arr[i]))
+				return true;
+		}
+		else if(arr[i]){
+			return true;
+		}
+	}
+	return false;
+}
+
+//2-dimensional array filled with the same value c
+function afilled(c, x, y){
+	var a=[];
+	for(var i=0;i<x;i++){
+		if(y==undefined){ //1-dim array
+			a[i]=c;
+		}
+		else{
+			a[i]=[];
+			for(var j=0;j<y;j++)
+				a[i][j]=c;
+		}
+	}
+	return a;
+}
+//2-dimensional array filled with the value returned by the function
+// (ind - function takes indices and x, y are numbers, not arrays;
+// default ind=false)
+function afilledf(f, x, y, ind){
+	if(ind==undefined)
+		ind=false
+	var a=[];
+	if(ind){
+		for(var i=0;i<x;i++){
+			a[i]=[];
+			for(var j=0;j<y;j++)
+				a[i][j]=f(i,j);
+		}
+	}
+	else{
+		for(var i=0;i<x.length;i++){
+			a[i]=[];
+			for(var j=0;j<y.length;j++)
+				a[i][j]=f(x[i],y[j]);
+		}
+	}
+	return a;
+}
+//get the part of 2-dim array
+function aget2d(arr, r0, c0, r1, c1){
+	var b=[];
+	for(var i=r0;i<=r1;i++){
+		b[i-r0]=[];
+		for(var j=c0;j<=c1;j++)
+			b[i-r0][j-c0]=arr[i][j];
+	}
+	return b;
+}
+//set the same value c in the part of 2-dim array
+function aset2d(arr, c, r0, c0, r1, c1){
+	for(var i=r0;i<=r1;i++)
+		for(var j=c0;j<=c1;j++)
+			arr[i][j]=c;
+}
+//function on each array element
+function afunc(arr, func, recur){
+	if(recur==undefined)
+		recur=true;
+	var b=[];
+	for(var i=0;i<arr.length;i++){
+		if(recur && Array.isArray(arr[i]))
+			b[i]=afunc(arr[i],func);
+		else
+			b[i]=func(arr[i]);
+	}
+	return b;
+}
+//compare 2 arrays
+function acomp(arr1,arr2){
+	if(arr1.length!=arr2.length)
+		return false;
+	for(var i=0;i<arr1.length;i++)
+		if(arr1[i]!=arr2[i])
+			return false;
+	return true;
+}
+//compare each element with the constant c
+function acompc(arr,c){
+	return afunc(arr,function(x){ return x==c});
+}
+
+//select elements from array with condition
+function aselc(arr, cond){
+	var b=[];
+	for(var i=0;i<arr.length;i++)
+		if(cond(arr[i]))
+			b.push(arr[i]);
+	return b;
+}
+//select elements from array with indices
+function aseli(arr, ind){
+	if(arr.length!=ind.length)
+		return [];
+	var b=[];
+	for(var i=0;i<arr.length;i++)
+		if(ind[i])
+			b.push(arr[i]);
+	return b;
+}
+//get row/column from 2-dim array
+function arc(arr, rc, j){
+	var b=[];
+	if(rc==ROW){
+		for(var i=0;i<arr[j].length;i++)
+			b[i]=arr[j][i];
+	}
+	else{ //rc==COL
+		for(var i=0;i<arr.length;i++)
+			b[i]=arr[i][j];
+	}
+	return b;
+}
+//print an array in a reasonable way - diagnostic function
+function aprint(arr){
+	document.write("[<br>");
+	for(var i=0;i<arr.length;i++){
+		document.write(arr[i]);
+		document.write("<br>");
+	}
+	document.write("]");
+}
+
+function argwhere(vec){ //vec - vector (1-dim array) with values true/false
+	var b=[];
+	for(var i=0;i<vec.length;i++)
+		if(vec[i])
+			b.push(i);
+	return b;
+}
+
+function arrMinMax(arr){ //from Stackoverflow
+	var min = arr[0];
+	var max = arr[0];
+	var i = arr.length;
+
+	while (i--) {
+		min = arr[i] < min ? arr[i] : min;
+		max = arr[i] > max ? arr[i] : max;
+	}
+	return [min, max];
+}
+function min(a,b){
+	return a<b ? a : b;
+}
+function max(a,b){
+	return a>b ? a : b;
+}
+
+function arrSum(arr){ //similar to above
+	var sum = 0;
+	var i = arr.length;
+
+	while (i--) {
+		if(Array.isArray(arr[i]))
+			sum+=arrSum(arr[i])
+		else
+			sum+=arr[i]
+	}
+	return sum;
+}
+
+String.prototype.replaceAt = function(index, replacement) { //from Stackoverflow
+	return this.slice(0, index) + replacement + this.slice(index + replacement.length);
+}
+
+function color_class(nr){
+	if(nr==-1)
+		return "e"
+	else if(nr==1)
+		return "f"
+	else
+		return "u"
+}
+function c(id,right){ //table cell - onclick / oncontextmenu
+	event.preventDefault()
+	var splitted=id.split(",")
+	var i=parseInt(splitted[0])
+	var j=parseInt(splitted[1])
+	if (i>=0 && j>=0 && !brute_started){
+		if(right)
+			sol_sel[i][j]+=1
+		else
+			sol_sel[i][j]-=1
+		if(sol_sel[i][j]<-1)
+			sol_sel[i][j]=1
+		else if(sol_sel[i][j]>1)
+			sol_sel[i][j]=-1
+		var elem=document.getElementById(id)
+		elem.className=elem.className.replaceAt(2,color_class(sol_sel[i][j]))
+	}
+}
+
+function load() {
+	var nnums=[[],[]]
+	var text=load_input.value
+	text=text.replace(/[;.,]/g, " ").split(/\r\n|\r|\n/g);
+	function replace0(x){ return x.replace(/^\s+|\s+$/gm,''); }
+	text=afunc(text,replace0); //trim whitespace
+	text=aselc(text, function(x){return x.length>0;});
+	var where_we_are=0 //0 - finding rows, 1 - cols, 2 - complete
+	var i=0
+	var j=0
+	while (i<text.length && where_we_are<2){
+		if(text[i].search(/^\d/)>=0){ //if the first sign is a digit
+			j=i;
+			while (j<text.length && text[j].search(/^\d/)>=0){
+				if(where_we_are==0)
+					nnums[ROW].push(aselc(  afunc(text[j].split(" "),parseInt)  ,  function(x){return x>0;}  )) //split, convert to int and remove zeros
+				else if(where_we_are==1)
+					nnums[COL].push(aselc(  afunc(text[j].split(" "),parseInt)  ,  function(x){return x>0;}  )) //split, convert to int and remove zeros
+				j+=1
+			}
+			i=j-1 //it will be incremented later: i+=1
+			where_we_are+=1
+		}
+		i+=1
+	}
+	if (nnums[ROW].length==0 || nnums[COL].length==0){
+		message("bad", "Error: Invalid input format. See README below for details.")
+		return
+	}
+	
+	nums=nnums
+	message("good", "Picture loaded.")
+
+	size=[nums[COL].length , nums[ROW].length] //[ROW,COL]
+	header_size=[arrMinMax(afunc(nums[ROW],len,false))[MAX] , arrMinMax(afunc(nums[COL],len,false))[MAX]] //[ROW,COL]
+
+
+	var text_output="<table style=\"border: medium solid black;}\">"
+	var idtext=""
+	var i=0
+	var temp=0
+	for(var i=0;i<header_size[COL];i++){
+		text_output+="<tr>"
+		if(i==0) text_output+="<td colspan="+header_size[ROW]+" rowspan="+header_size[COL]+" style=\"border-width: medium;\">" //the big cell in the upper-left corner
+		for(var j=0;j<size[ROW];j++){
+			text_output+="<td class=\"c e x"
+			if(i==header_size[COL]-1)			text_output+=" b"
+			else						text_output+=" x"
+			if(j%5==4)					text_output+=" g"
+			else						text_output+=" x"
+			text_output+="\" id=\""
+			id_text=(-i-1)+","+(j)
+			text_output+=id_text
+			text_output+="\">"
+			temp=nums[COL][j].length-header_size[COL]+i
+			if(temp>=0) text_output+=nums[COL][j][temp]
+		}
+	}
+	for(var i=0;i<size[COL];i++){
+		text_output+="<tr>"
+		for(var j=0;j<header_size[ROW];j++){
+			text_output+="<td class=\"r e x"
+			if(i%5==4)					text_output+=" b"
+			else						text_output+=" x"
+			if(j==header_size[ROW]-1)			text_output+=" g"
+			else						text_output+=" x"
+			text_output+="\" id=\""
+			id_text=(i)+","+(-j-1)
+			text_output+=id_text
+			text_output+="\">"
+			temp=nums[ROW][i].length-header_size[ROW]+j
+			if(temp>=0) text_output+=nums[ROW][i][temp]
+		}
+		for(var j=0;j<size[ROW];j++){
+			text_output+="<td class=\"x u x"
+			if(i%5==4)					text_output+=" b"
+			else						text_output+=" x"
+			if(j%5==4)					text_output+=" g"
+			else						text_output+=" x"
+			text_output+="\" id=\""
+			id_text=i+","+j
+			text_output+=id_text
+			text_output+="\" onclick=\"c(this.id,0)\" oncontextmenu=\"c(this.id,1)\">"
+		}
+	}
+	text_output+="</table>"
+	table_output.innerHTML=text_output
+	
+	reload()
+	
+	//Checking sums
+	if(  arrSum(nums[ROW])  ==  arrSum(nums[COL])  ){
+		afunc(disabled_uninit,enable) //brute and nonbrute were properly set in "reload" function
+		preview_lab.style.color="black";
+		brute_lab.style.color="black";
+	}
+	else{
+		message("bad", "Error: Sums of numbers from rows and from columns are different. The image description is corrupted.")
+		afunc(disabled_uninit.concat(disabled_brute,disabled_nonbrute),disable)
+		preview_lab.style.color="LightGray";
+		brute_lab.style.color="LightGray";
+	}
+}
+
+function select_solution(i){ //select solution to show
+	sol_sel=solutions[i].sol
+	desc_row_sel=solutions[i].desc[ROW]
+	desc_col_sel=solutions[i].desc[COL]
+	compl_row_sel=solutions[i].compl[ROW]
+	compl_col_sel=solutions[i].compl[COL]
+}
+
+function reload(){
+	//The most important - list of solutions :)
+	solutions=[new Solution()]
+	select_solution(0)
+	/*
+	choose_spb.set("")
+	choose_spb["to"]=1
+	choose_lab["text"]=""
+	brute_use.set(0)
+	*/
+	brute_started=false
+	afunc(disabled_brute,enable)
+	afunc(disabled_nonbrute,disable)
+
+	update_output()
+}
+
+//drag & drop
+//from W3SCHOOLS and developer.mozilla.org
+document.addEventListener("dragover", function(event) {
+	event.preventDefault()
+});
+document.addEventListener("drop", function(event) {
+	event.preventDefault()
+	var files=event.dataTransfer.files
+	if(files.length==0)
+		message("bad", "Dropped object is not a file.")
+	else if(files.length>1)
+		message("bad", "Drop only one file.")
+	else if(!/^text/i.test(files[0].type))
+		message("bad", "Dropped file is not a text file.")
+	else{
+		message("good", files[0].type)
+		//Read the file
+		var reader = new FileReader()
+		reader.readAsText(files[0])
+		reader.onload=function(){
+			load_input.innerHTML=reader.result
+			load()
+		}
+		reader.onerror=function(){
+			message("bad", "Error reading the file. Please try again.")
+		}
+	}
+});
+
+//---------------------------------
+// Update output
+//---------------------------------
+
+function update_output(){
+	for(var i=0;i<size[COL];i++){
+		for(var j=0;j<size[ROW];j++){
+			var elem=document.getElementById(i+","+j)
+			elem.className=elem.className.replaceAt(2,color_class(sol_sel[i][j]))
+			elem.innerHTML=""
+		}
+	}
+	update_output_crossout_row()
+	update_output_crossout_col()
+}
+
+function update_output_row(){
+	for(var i=0;i<size[COL];i++){
+		for(var j=0;j<size[ROW];j++){
+			var elem=document.getElementById(i+","+j)
+			elem.className=elem.className.replaceAt(0,"r")
+			elem.className=elem.className.replaceAt(2,color_class(sol_sel[i][j]))
+			if(desc_row_sel[i][j]>-1)
+				elem.innerHTML=nums[ROW][i][desc_row_sel[i][j]]
+			else
+				elem.innerHTML=""
+		}
+	}
+	update_output_crossout_row()
+}
+
+function update_output_col(){
+	for(var i=0;i<size[COL];i++){
+		for(var j=0;j<size[ROW];j++){
+			var elem=document.getElementById(i+","+j)
+			elem.className=elem.className.replaceAt(0,"c")
+			elem.className=elem.className.replaceAt(2,color_class(sol_sel[i][j]))
+			if(desc_col_sel[i][j]>-1)
+				elem.innerHTML=nums[COL][j][desc_col_sel[i][j]]
+			else
+				elem.innerHTML=""
+		}
+	}
+	update_output_crossout_col()
+}
+
+//crossing out completed blocks
+function update_output_crossout_row(){
+	for(var i=0;i<size[COL];i++){
+		for(var j=0;j<nums[ROW][i].length;j++){
+			var elem=document.getElementById(i+","+(-(header_size[ROW]-nums[ROW][i].length+j+1)))
+			elem.className=elem.className.replaceAt(4,(compl_row_sel[i][j] ? "t" : "x"))
+		}
+	}
+}
+function update_output_crossout_col(){
+	for(var i=0;i<size[ROW];i++){
+		for(var j=0;j<nums[COL][i].length;j++){
+			var elem=document.getElementById((-(header_size[COL]-nums[COL][i].length+j+1))+","+i)
+			elem.className=elem.className.replaceAt(4,(compl_col_sel[i][j] ? "t" : "x"))
+		}
+	}
+}
+
+//---------------------------------
+// Solving
+//---------------------------------
+
+function Solution(other){
+	if(other==undefined){
+		this.sol=afilled(0, size[COL], size[ROW]) //solution: -1 - no, 0 - unknown, 1 - yes
+		for(var i=0;i<nums[ROW].length;i++) //empty rows
+			if(nums[ROW][i].length==0)
+				aset2d(this.sol,-1,i,0,i,size[ROW]-1)
+		for(var i=0;i<nums[COL].length;i++) //empty cols
+			if(nums[COL][i].length==0)
+				aset2d(this.sol,-1,0,i,size[COL]-1,i)
+
+		//Cell describing numbers
+		this.desc=[[],[]]
+		this.desc[ROW]=afilled(-1, size[COL], size[ROW])
+		this.desc[COL]=afilled(-1, size[COL], size[ROW])
+		//Completed numbers
+		this.compl=[[],[]]
+		this.compl[ROW]=afunc(nums[ROW], function(x){return false} )
+		this.compl[COL]=afunc(nums[COL], function(x){return false} )
+		this.rec_level=0 //recursive level
+	}
+	else{
+		/*
+		this.sol=np.array(other.sol)
+		//Cell describing numbers
+		this.desc=[[],[]]
+		this.desc[ROW]=np.array(other.desc[ROW])
+		this.desc[COL]=np.array(other.desc[COL])
+		//Completed numbers
+		this.compl=[[],[]]
+		this.compl[ROW]=[list(x) for x in other.compl[ROW]]
+		this.compl[COL]=[list(x) for x in other.compl[COL]]
+		this.rec_level=other.rec_level+1 //recursive level
+		*/
+	}
+	
+	this.step_type=ROW
+	this.step_counter=0
+	this.change=false
+	this.steps_no_change=0
+	this.error=false
+}
+
+Solution.prototype.solv_error=function(text){
+	this.error=true
+	if(!brute_started)
+		message("bad", text)
+}
+
+//Updating solution is not direct, because it requires checking for errors
+Solution.prototype.sol_update=function(rc, i, j, from, to, mode){
+	if (!(  (rc==ROW || rc==COL) && (mode==1 || mode==-1) && from<=to && from>=0 && to<size[rc]  ))
+		return //wrong arguments
+
+	if(rc==ROW){ //one row
+		r0=i
+		r1=i
+		c0=from
+		c1=to
+	}
+	else{ //one col
+		r0=from
+		r1=to
+		c0=i
+		c1=i
+	}
+	var fragm=arc(this.sol, rc, i).slice(from,to+1)
+	var any0=false
+	for(var k=0;k<fragm.length;k++){
+		var x=fragm[k]
+		if(mode==1 && x==-1){ //for yes, but we already have no
+			this.solv_error("Error when filling area ("+(r0+1)+","+(c0+1)+")-("+(r1+1)+","+(c1+1)+") - some cells have already been removed.")
+			return
+		}
+		if(mode==-1 && x==1){ //for no, but we already have yes
+			this.solv_error("Error when removing area ("+(r0+1)+","+(c0+1)+")-("+(r1+1)+","+(c1+1)+") - some cells have already been filled.")
+			return
+		}
+		if(x==0)
+			any0=true
+	}
+	if(any0){
+		this.change=true
+		aset2d(this.sol,mode,r0,c0,r1,c1)
+	}
+
+	if(mode==1 && j>=0){
+		var fragm=arc(this.desc[rc], rc, i).slice(from,to+1)
+		var any0=false
+		for(var k=0;k<fragm.length;k++){
+			var x=fragm[k]
+			if(x==-1)
+				any0=true
+			else if(x!=j){
+				this.solv_error("Error when filling area ("+(r0+1)+","+(c0+1)+")-("+(r1+1)+","+(c1+1)+") - some cells have already been filled with other value.")
+				return
+			}
+		}
+		if(any0){
+			this.change=true
+			aset2d(this.desc[rc],j,r0,c0,r1,c1)
+		}
+		//Whole block is found
+		if(to-from+1==nums[rc][i][j]){
+			//sol_update(rc, i, j, from, to, mode)
+			this.sol_update(rc, i, 0, from-1, from-1, -1)
+			this.sol_update(rc, i, 0, to+1, to+1, -1)
+			if(!this.compl[rc][i][j]){
+				this.change=true
+				this.compl[rc][i][j]=true
+			}
+		}
+	}
+}
+
+Solution.prototype.final_check=function(){
+	for(var rc=0;rc<2;rc++){ //ROW=0, COL=1
+		for(var i=0;i<size[1-rc];i++){ //ROW->COL, COL->ROW
+			var rc_sel=arc(this.sol, rc, i)
+			var blocks=[]
+			var j=0
+			while(j<size[rc]){
+				/*
+				if(rc_sel[j]==0):
+					if brute_use.get():
+						this.brute_solve()
+					return
+				*/
+				if(rc_sel[j]==1){
+					var k=j
+					while(k<size[rc] && rc_sel[k]==1)
+						k+=1
+					blocks.push(k-j)
+					j=k
+				}
+				j+=1
+			}
+			if(!acomp(blocks,nums[rc][i])){
+				this.solv_error("Final check failed.")
+				return
+			}
+		}
+	}
+	//Success
+	if(brute_started){
+		/*
+		for x in disabled_nonbrute:
+			x["state"]="normal"
+		if choose_spb.get()=="":
+			choose_spb.set(1)
+		solutions.append(self)
+		choose_spb["to"]=len(solutions)
+		choose_lab["text"]="/"+str(len(solutions))
+		window.update()
+		*/
+	}
+	else{
+		message("good", "Completed!")
+	}
+}
+
+Solution.prototype.solve=function(){
+	this.steps_no_change=0
+	this.error=false //continue solving
+	while(this.steps_no_change<=1 && !this.error){
+		/*
+		if(preview.get() && !brute_started){
+		*/
+		if(false){
+			this.step(show=true)
+		}
+		else
+			this.step(show=false)
+		if(this.change)
+			this.steps_no_change=0
+		else
+			this.steps_no_change+=1
+	}
+	update_output()
+	if(!this.error)
+		this.final_check()
+}
+
+Solution.prototype.step=function(show){
+	if(show==undefined)
+		show=true
+	this.error=false
+	this.step_counter+=1
+	//print("Step:", this.step_counter)
+	this.change=false
+
+	for(var i=0;i<size[1-this.step_type];i++){ //ROW->COL, COL->ROW
+		if(!aall(this.compl[this.step_type][i])) //if there is something to do
+			this.find_blocks(this.step_type,i)
+		if(this.error)
+			break
+	}
+
+	if(show){
+		if(this.step_type==ROW)
+			update_output_row()
+		else //this.step_type==COL
+			update_output_col()
+	}
+	this.step_type=1-this.step_type //ROW->COL, COL->ROW
+}
+
+Solution.prototype.find_blocks=function(rc,i){
+	var rc_sel=arc(this.sol,rc,i)
+	var rc_seld=arc(this.desc[rc],rc,i)
+	//If only no other cells can be filled... - testing sums
+	if(  arrSum(acompc(rc_sel,1))==arrSum(nums[rc][i])  ){
+		for(var j=0;j<size[rc];j++){
+			if(rc_sel[j]==0)
+				//sol_update(rc, i, j, from, to, mode)
+				this.sol_update(rc, i, 0, j, j, -1)
+			if(this.error)
+				return
+		}
+	}
+	//non-removed blocks
+	var nonremoved_blocks=[]
+	var j=0
+	while(j<size[rc]){
+		if(rc_sel[j]>=0){
+			var filled_blocks=[] //beg, end, len
+			var k=j
+			while(k<size[rc] && rc_sel[k]>=0){
+				//filled blocks
+				var t=k
+				if(rc_sel[t]==1){
+					var desc_num=-1
+					while(t<size[rc] && rc_sel[t]==1){
+						if(desc_num==-1)
+							desc_num=rc_seld[t]
+						t+=1
+					}
+					filled_blocks.push([k,t-1,t-k,desc_num]) //beg, end, len, describing number
+					k=t-1 //it will be incremented later: k+=1
+				}
+				k+=1
+			}
+			nonremoved_blocks.push([j,k-1,k-j,filled_blocks]) //beg, end, len, filled_blocks
+			j=k
+		}
+		j+=1
+	}
+	
+	//Assignment matrix: describing number --- non-removed block (False - cannot be assigned)
+	//in which non-removed blocks the number can be
+	if(nonremoved_blocks.length==1){ //Trivial, but common case
+		var assignm=afilled(true, nums[rc][i].length, 1)
+		var assignv=afilled(0, nums[rc][i].length)
+	}
+	else{
+		//When we have the same amounts of describing numbers and filled blocks that cannot be connected...
+		if(  nonremoved_blocks.length==nums[rc][i].length && aall(afunc(nonremoved_blocks, function(x){return x[NRB_filled_blocks].length==1}, false))  ){
+			var assignm=afilledf(function(j,k){return j==k}, nums[rc][i].length, nums[rc][i].length,true)
+		}
+		else{ //... or more complicated assignment matrix
+			//By length
+			//var assignm=np.array( [[y[NRB_len]>=x for y in nonremoved_blocks] for x in nums[rc][i]] )
+			var assignm=afilledf(function(x,y){return y[NRB_len]>=x}, nums[rc][i], nonremoved_blocks)
+			//Numbers already assigned to filled blocks
+			for(var j=0;j<nonremoved_blocks.length;j++){
+				for(var z=0;z<nonremoved_blocks[j][NRB_filled_blocks].length;z++){
+					var desc_num=nonremoved_blocks[j][NRB_filled_blocks][z][FB_desc_num]
+					if(desc_num>=0){
+						//aset2d(arr,c, r0,c0, r1,c1)
+						aset2d(assignm,false, desc_num,0, desc_num,nonremoved_blocks.length-1)
+						if(this.compl[rc][i][desc_num]) //(*)
+							aset2d(assignm,false, 0,j, nums[rc][i].length-1,j) //(*)
+						assignm[desc_num][j]=true //Only one cell in this row can be True
+						 //(*) If the number is completed, then nothing else can be in this non-removed block
+					}
+				}
+			}
+			//Sums in first and last block
+			var j=nums[rc][i].length-1
+			while(j>=0){
+				//var sel_nrs=np.array(nums[rc][i])[np.ravel(assignm[:,0])]
+				var sel_nrs=aseli(nums[rc][i] , arc(assignm, COL, 0))
+				if(  arrSum(sel_nrs)+sel_nrs.length-1>nonremoved_blocks[0][NRB_len]  ) //theese numbers cannot be together in this block
+					assignm[j][0]=false
+				j-=1
+			}
+			var j=0
+			var last_col=nonremoved_blocks.length-1
+			while(j<nums[rc][i].length){
+				var sel_nrs=aseli(nums[rc][i] , arc(assignm, COL, last_col))
+				if(  arrSum(sel_nrs)+sel_nrs.length-1>nonremoved_blocks[last_col][NRB_len]  ) //theese numbers cannot be together in this block
+					assignm[j][last_col]=false
+				j+=1
+			}
+			//Order of decribing numbers - previous numbers cannot be in next blocks
+			//and next numbers cannot be in previous blocks
+			for(var j=0;j<assignm.length;j++){ //iterate over row numbers
+				var indices=[]
+				for(var k=0;k<nonremoved_blocks.length;k++)
+					if(assignm[j][k])
+						indices.push(k)
+				if(indices.length>0){
+					aset2d(assignm, false, 0, indices[indices.length-1]+1, j-1, nonremoved_blocks.length-1)
+					aset2d(assignm, false, j+1, 0, assignm.length-1, indices[0]-1)
+				}
+				else{
+					this.solv_error("Number "+nums[rc][i][j]+" in"+rc_text(rc)+(i+1)+" cannot be placed.")
+					return
+				}
+			}
+		}
+
+		//Assignment vector: describing number --- one non-removed block
+		// -1 - there are more than one
+		// >0 - in which non-removed block the number must be
+		var assignv=afilled(-1, nums[rc][i].length)
+		for(var j=0;j<nums[rc][i].length;j++){
+			var argwherev=argwhere(assignm[j])
+			if (argwherev.length==0 && !this.compl[rc][i][j]){
+				this.solv_error("Number "+nums[rc][i][j]+" in"+rc_text(rc)+(i+1)+" cannot be placed.")
+				return
+			}
+			else if(argwherev.length==1){
+				assignv[j]=argwherev[0]
+			}
+		}
+	}
+	
+	for(var j=0;j<nonremoved_blocks.length;j++){
+		this.fill_in_nonrem_blocks(rc,i,nonremoved_blocks[j],argwhere(acompc(assignv, j)))
+		this.new_filled_block(rc,i,nonremoved_blocks[j],argwhere(arc(assignm, COL, j)))
+		if(!aany(arc(assignm, COL, j))) //nothing can be in this non-removed block
+			this.sol_update(rc,i,0,nonremoved_blocks[j][NRB_beg],nonremoved_blocks[j][NRB_end],-1) //(rc,i,j,from,to,mode)
+	}
+	this.remove_in(rc,i)
+}
+
+Solution.prototype.fill_in_nonrem_blocks=function(rc,i,nonrem_block,desc_num){
+	if(desc_num.length==0) return
+	var desc_len=afunc(desc_num, function(j){return nums[rc][i][j]})
+	var end=nonrem_block[NRB_beg]+desc_len[0]-1
+	var beg=nonrem_block[NRB_end]-arrSum(desc_len)-desc_len.length+2
+	this.sol_update(rc, i, desc_num[0], beg, end, 1) //(rc, i, j, from, to, mode)
+	this.sol_update(rc=rc, i=i, j=desc_num[0], from_=beg, to=end, mode=1)
+	for(var j=1;j<desc_num.length;j++){
+		end+=desc_len[j]+1
+		beg+=desc_len[j-1]+1
+		this.sol_update(rc, i, desc_num[j], beg, end, 1) //(rc, i, j, from, to, mode)
+	}
+}
+
+Solution.prototype.new_filled_block=function(rc,i,nonrem_block,desc_num){
+	for(var k=0;k<nonrem_block[NRB_filled_blocks].length;k++){
+		var x=nonrem_block[NRB_filled_blocks][k]
+		var match=-1
+		if(x[FB_desc_num]==-1){
+			var matches1=afunc(desc_num, function(j){ return x[FB_len]<=nums[rc][i][j] })  //the length is proper
+			var rc_sel=arc(this.sol, rc, i)
+			var sep_0=(x[FB_beg]>0 && rc_sel[x[FB_beg]-1]==0) ? 1 : 0 //additional separator before
+			var sep_1=(x[FB_end]<size[rc]-1 && rc_sel[x[FB_end]+1]==0) ? 1 : 0 //additional separator after
+			var matches2=afunc(desc_num, function(j){  return arrSum(afunc(rc_sel.slice(0,x[FB_beg]),function(x){return x>=0}))>=arrSum(nums[rc][i].slice(0,j))+sep_0  }) //there is enough place for blocks before
+			var matches3=afunc(desc_num, function(j){  return arrSum(afunc(rc_sel.slice(x[FB_end]+1),function(x){return x>=0}))>=arrSum(nums[rc][i].slice(j+1))+sep_1  }) //there is enough place for blocks after
+			var matches=[]
+			for(var t=0;t<desc_num.length;t++)
+				matches.push(matches1[t] && matches2[t] && matches3[t])
+
+			if(arrSum(matches)==1){ //only one number matches
+				match=desc_num[argwhere(matches)[0]]
+				this.sol_update(rc, i, match, x[FB_beg], x[FB_end], 1)
+			}
+			else{
+				if(arrSum(matches)==0){
+					this.solv_error("Matching error in"+rc_text(rc)+(i+1)+".")
+					return
+				}
+				//this block cannot be extended
+				//matching_lens=np.array(nums[rc][i])[np.array(desc_num)[matches]]
+				var matching_lens=afunc(aseli(desc_num,matches), function(j){return nums[rc][i][j]})
+				if(aall(afunc(matching_lens,function(j){ return j<=x[FB_len] }))){
+					this.sol_update(rc, i, 0, x[FB_beg]-1, x[FB_beg]-1, -1)
+					this.sol_update(rc, i, 0, x[FB_end]+1, x[FB_end]+1, -1)
+				}
+			}
+		}
+		else match=x[FB_desc_num]
+		
+		if(!this.compl[rc][i][match] && match>=0){ //bouncing from the borders
+			var len_match=nums[rc][i][match]
+			var fake_b=max(nonrem_block[NRB_beg],x[FB_end]-len_match+1)
+			var fake_e=min(nonrem_block[NRB_end],x[FB_beg]+len_match-1)
+			fake_block=[fake_b,fake_e,fake_e-fake_b+1,[]]
+			this.fill_in_nonrem_blocks(rc,i,fake_block,[match])
+		}
+	}
+	//2 blocks, 2 describing numbers:
+	if(nonrem_block[NRB_filled_blocks].length==2 && desc_num.length==2){
+		if(!this.compl[rc][i][desc_num[0]] || !this.compl[rc][i][desc_num[1]]){
+			//total length if these blocks can be connected
+			var tot_len=nonrem_block[NRB_filled_blocks][1][FB_end]-nonrem_block[NRB_filled_blocks][0][FB_beg]+1
+			if(tot_len>nums[rc][i][desc_num[0]] && tot_len>nums[rc][i][desc_num[1]]){
+				//these blocks cannot be connected
+				//sol_update(rc, i, j, from, to, mode)
+				this.sol_update(rc, i, desc_num[0], nonrem_block[NRB_filled_blocks][0][FB_beg], nonrem_block[NRB_filled_blocks][0][FB_end], 1)
+				this.sol_update(rc, i, desc_num[1], nonrem_block[NRB_filled_blocks][1][FB_beg], nonrem_block[NRB_filled_blocks][1][FB_end], 1)
+			}
+		}
+	}
+}
+
+Solution.prototype.remove_in=function(rc,i){
+	var first_pos=afilled(-1, nums[rc][i].length)
+	var last_pos=afilled(-1, nums[rc][i].length)
+	var rc_sel=arc(this.desc[rc], rc, i)
+	var j=0
+	while(j<size[rc]){
+		if(rc_sel[j]>=0 && first_pos[rc_sel[j]]==-1)
+			first_pos[rc_sel[j]]=j
+		j+=1
+	}
+	j=size[rc]-1
+	while(j>=0){
+		if(rc_sel[j]>=0 && last_pos[rc_sel[j]]==-1)
+			last_pos[rc_sel[j]]=j
+		j-=1
+	}
+	for(var j=0;j<first_pos.length;j++){
+			//this.sol_update(rc, i, j, from, to, mode)
+		if(j==0 && first_pos[j]>=0) //before
+			this.sol_update(rc, i, 0, 0, last_pos[j]-nums[rc][i][j], -1)
+		if(j==len(first_pos)-1 && first_pos[j]>=0) //after
+			this.sol_update(rc, i, 0, first_pos[j]+nums[rc][i][j], size[rc]-1, -1)
+		else if(first_pos[j]>=0 && first_pos[j+1]>=0) //between
+			this.sol_update(rc, i, 0, first_pos[j]+nums[rc][i][j], last_pos[j+1]-nums[rc][i][j+1], -1)
+	}
+}
+
+/*
+//---------------------------------
+// Brute-force solving
+//---------------------------------
+
+Solution.prototype.brute_solve=function():
+	global solutions, brute_started
+	if !brute_started:
+		solutions=[]
+		brute_started=True
+		for x in disabled_brute:
+			x["state"]="disabled"
+		//for x in disabled_nonbrute:  //only if success, so in final_check
+		//	x["state"]="normal"
+		
+	
+	PI= -max(size[ROW],size[COL]) //Performance Index ;)
+	PI_rc=ROW
+	PI_i=0
+	for rc in [ROW,COL]:
+		for i in range(size[1-rc]): //ROW->COL, COL->ROW
+			if rc==ROW:
+				rc_sel=np.ravel(this.sol[i,:])
+			else: //rc==COL
+				rc_sel=np.ravel(this.sol[:,i])
+			PI_empty=np.sum(rc_sel==0)
+			if PI_empty>0:
+				PI_maxlist=np.array(nums[rc][i])[np.array(this.compl[rc][i])==False]
+				if len(PI_maxlist)>0:
+					PI_new=np.max(PI_maxlist)-PI_empty
+					//if rc==ROW:
+						//print(i, PI_new)
+					if PI_new>PI:
+						PI=PI_new
+						PI_rc=rc
+						PI_i=i
+
+	if preview.get():
+		preview_cmd(self)
+	window.update() //to enable interrupt and preview during solving
+
+	if PI_rc==ROW:
+		rc_sel=np.ravel(this.sol[PI_i,:])
+		//print("BRUTE_SOLVE - YES - REC. LEVEL:", this.rec_level, "ROW:", PI_i+1)
+	else: //PI_rc==COL
+		rc_sel=np.ravel(this.sol[:,PI_i])
+		//print("BRUTE_SOLVE - YES - REC. LEVEL:", this.rec_level, "COL:", PI_i+1)
+	first_empty=np.min(np.arange(size[PI_rc])[rc_sel==0])
+	//print(PI_rc,PI_i,PI,first_empty)
+	//if len(solutions)>=2000: //PROTECTION VALUE
+	//	return
+	case_no=Solution(self) //duplicating
+	this.sol_update(rc=PI_rc, i=PI_i, from_=first_empty, mode=1) //case: yes
+	this.solve()
+
+	//if PI_rc==ROW:
+	//	print("BRUTE_SOLVE - NO - REC. LEVEL:", this.rec_level, "ROW:", PI_i+1)
+	//else: //PI_rc==COL
+	//	print("BRUTE_SOLVE - NO - REC. LEVEL:", this.rec_level, "COL:", PI_i+1)
+	case_no.sol_update(rc=PI_rc, i=PI_i, from_=first_empty, mode=-1) //case: no
+	case_no.solve()
+*/
+
+document.write("ROBIMY TESTY<br>")
+document.write(acomp([1,5],[1,5]))
+document.write(acomp([1,6],[1,5]))
+document.write(acomp([1,1],[2]))
+
+//document.write(text)
+//table_output.innerHTML="<tr><td>sdfghgfhjjhgkkhjh<td>dffhfghgf<tr><td>fgfg"
+//text=afunc(text, function(x){return x.split(" ");});
+//document.write("XXX")
+//aprint(nnums[ROW])
+//aprint(nnums[COL])
+document.write(sol_sel)
+document.write("<br>KONIEC TESTOW")
+
+disabled_uninit=["reload_id","brute_id","brute_lab_id","preview_id","preview_lab_id"];
+disabled_brute=["step_id","solve_id"];
+disabled_nonbrute=["choose_id"];
+function disable(x){ document.getElementById(x).disabled=true; }
+function enable(x){ document.getElementById(x).disabled=false; }
+afunc(disabled_uninit.concat(disabled_brute,disabled_nonbrute),disable)
+preview_lab.style.color="LightGray";
+brute_lab.style.color="LightGray";
+
+
+
+
+
+
+
+
+		</script>
+		<noscript>
+			JavaScript is required. Please, enable it.
+		</noscript>
+			
+		</table>
+	</body>
+</html>

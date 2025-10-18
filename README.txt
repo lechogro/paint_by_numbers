@@ -3,8 +3,8 @@
 ##############################################
 
 Created by Lechosław Grochowski (Poland), 2024-2025, contact: lechogro [you-know-what] gmail [dot] com
-Currently available only as Python source code, also packed to Windows 32- and 64-bit EXE files with PyInstaller tool.
-Online version is planned ;)
+Currently available only as Python source code, also packed to Windows 64-bit EXE files with PyInstaller tool.
+Online version is being created ;)
 You are free to copy and reuse the program and the source code, but please include the information about the author.
 
 1. Interface
@@ -13,11 +13,11 @@ The program very simple interface consists of the following objects:
 *) "Load..." button - see "2. Loading nonograms".
 *) "Reload" button - brings the program to the state just after loading the file, resetting any progress.
 *) "Step >" button - performs one step of solving - see "3. Solving - standard".
-*) "Solve >>" button - performs as many steps of solving as it is required to solve the picture. If no other steps are successful and the option "use also brute-force approach" is enabled, then the program automatically switches to the brute-force mode.
-*) "Preview" checkbox - enables a preview in brute-force mode - see "5. Solving - brute-force". If selected, each created picture is shown, what decreases the speed of solving, sometimes really significantly.
-*) "Use also brute-force approach" checkbox - enables brute-force approach (see "5. Solving - brute-force"). Otherwise, when standard approach does not succeed, the program remains the picture unsolved so that You can finish it ;)
-*) Selecting solution spinbox - active only in brute-force mode, as standard mode does not support multiple solutions.
-*) Clickable picture - toggles the state of the cells: unknown (gray) -> removed (white) -> filled (black). Both left and right mouse buttons can be used. Clicking reaction is inactive in the brute-force mode.
+*) "Solve >>" button - performs as many steps of solving as it is required to solve the picture. If no other steps are successful and the option "use also brute-force approach" is enabled, then the program automatically switches to the pre-brute-force and (if needed) to the brute-force mode.
+*) "Preview" checkbox - enables a preview. If selected, a lot of intermediate pictures are shown, what decreases the speed of solving, sometimes really significantly. Details: In standard mode the result of each is step is shown. In pre-brute-force mode each successful selection is shown. In brute-force mode each considered case is shown.
+*) "Use also brute-force approach" checkbox - enables pre-brute-force and brute-force approach (see "5. Solving - brute-force"). Otherwise, when standard approach does not succeed, the program remains the picture unsolved so that You can finish it ;)
+*) Selecting solution spinbox - active only in brute-force mode, as standard mode and pre-brute-force mode do not support multiple solutions.
+*) Clickable picture - toggles the state of the cells: unknown (gray) -> removed (white) -> filled (black). Both left and right mouse buttons can be used. Clicking reaction is inactive in the brute-force mode (because then multiple solutions are supported).
 
 2. Loading nonograms
 
@@ -42,7 +42,7 @@ cols
 5
 1,1
 1,1
-1,1,1
+1,1, 1
 1,3
 
 After solving it gives:
@@ -53,15 +53,15 @@ After solving it gives:
 # # # # # . # # # # #
 
 Remarks:
-*) Texts "rows" and "cols" can be replaced to anything else - the program checks only first sign in line, if it is a digit or not. However, you have to specify ROWS FIRST, then columns.
-*) Acceptable separators are both commas and spaces - they are treated in the same way and can be mixed, as in the example above.
+*) Texts "rows" and "cols" can be replaced to anything else - the program checks only first sign in line (after trimming whitespace characters), if it is a digit or not. However, you have to specify ROWS FIRST, then columns.
+*) Acceptable separators are both commas and spaces - they are treated in the same way and can be mixed, as in the example above. To provide at least partial compatibility with JSON files, also brackets []{} are treated as a spaces.
 *) Empty text lines are ignored, so You can e.g. group every 5 lines. To put an empty row or column, use 0, as in the example above.
 
 3. Solving - standard
 
 The first stage of solving is trying to use the specific procedure on rows, columns, rows, columns etc., skipping completed ones. The procedure used on all rows is referred here as a step, then another step concerns all columns, then another step concerns all rows. If no progress is done in 2 subsequent steps for rows and columns, then:
 *) If everything is done, the final check is performed.
-*) If something is not done and the option "Use also brute-force approach" is enabled, the brute-force solving is started.
+*) If something is not done and the option "Use also brute-force approach" is enabled, the pre-brute-force and then brute-force solving is started.
 *) If something is not done and the option "Use also brute-force approach" is disabled, the program just stops. You can help it clicking on the picture and hence giving the program further information.
 
 If You want to avoid arduous work, but have some fun, it is recommended not to use brute-force approach and stay only in the standard mode.
@@ -125,10 +125,14 @@ Other cases considered by the algorithm:
 
 5. Solving - brute-force
 
-Brute-force solving mode becomes active when the checkbox "Use also brute-force approach" is selected and if using only standard mode it is impossible to solve the picture. Its idea is creating the binary tree of all solutions and searching it depth-first, rejecting all contradictory cases. To reduce the number of steps, the way of creating new solutions is based on an empirically created Performance Index for each row and each column. It is given by the difference x-y, where x is the biggest describing number not referring to any completed non-removed block and y is the number of unknown cells. It can be considered as a degree of predictability of still unknown part in a row or a column: the bigger, the better. A row or a column with the biggest Performance Index is chosen to create two solutions: where first unknown cell in the selected row or column is either filled, or removed. Then standard solving takes place and after it new solution candidates are created recursively unless there was any contradiction or there are no empty cells to fill or remove.
+Brute-force solving mode becomes active when the checkbox "Use also brute-force approach" is selected and if using only standard mode and pre-brute-force mode (see below) it is impossible to solve the picture. Its idea is to create the binary tree of all solutions and to search it depth-first, rejecting all contradictory cases. To reduce the number of steps, the way of creating new solutions is based on an empirically created Performance Index for each row and each column. It is given by the difference x-y, where x is the biggest describing number not referring to any completed non-removed block and y is the number of unknown cells. It can be considered as a degree of predictability of still unknown part in a row or a column: the bigger, the better. A row or a column with the biggest Performance Index is chosen to create two solutions: where first unknown cell adjacent to any filled cell in the selected row or column (if there are no filled cells, then just first unknown cell is taken) is either filled, or removed. Then standard solving takes place and after it new solution candidates are created recursively unless there is any contradiction or there are no empty cells to fill or remove.
 
-The steps described here can be visualised with the "Preview" option, but it significantly decreases the speed of solving. However, even without it, the solving time can be sometimes very, very long. For example for 10x10 picture described by one "1" in each row and column, there are 10! = 3 628 800 possible solutions. To interrupt solving, deselect the "Use also brute-force approach" checkbox.
+The steps described here can be visualised with the "Preview" option, but it significantly decreases the speed of solving. However, even without it, the solving time can be sometimes very, very long. For example for 10x10 picture described with one "1" in each row and column, there are 10! = 3 628 800 possible solutions. To interrupt solving, deselect the "Use also brute-force approach" checkbox.
+
+However, sometimes a lot of cases are created and considered, what takes much time, and finally they all turn out to be contradictory. To avoid such situations, the pre-brute-force mode is introduced, which is based on full brute-force mode, but then no binary tree is created. When the case of filling / removing a cell is contradictory, then the opposite case remains. And when no contradiction is proven, then the considered row / column is skipped in the reasoning, what prevents creating more cases. Hence in the pre-brute-force mode there is still one solution concerned as in the standard mode. To prevent analysis of rows / columns which give no useful information, the list of computed Performance Indices is sorted in descending order. When the value exactly in the middle is exceeded and if some prior PI's gave some result, then no further rows / columns are analyzed, but again PI's are computed and again the biggest is considered at first. Also rows / columns giving no information are noted and their PIs are reduced with a penalty.
 
 #####################
 ##### Have fun! #####
 #####################
+
+The octopus in the video is taken from: https://github.com/ThomasR/nonogram-solver
